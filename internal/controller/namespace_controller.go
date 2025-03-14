@@ -107,6 +107,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 
+			// TODO: investigate the ctrl.CreateOrUpdate method to handle diff lifecycle events, like update vs create
 			if err = r.Create(ctx, np); err != nil {
 				// logger.Error(err, "unable to create NetworkPolicy") // this is not needed
 				return ctrl.Result{}, err
