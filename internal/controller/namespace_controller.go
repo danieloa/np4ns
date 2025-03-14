@@ -55,7 +55,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	err := r.Get(ctx, req.NamespacedName, ns)
 	if err != nil {
-		logger.Error(err, "unable to fetch Namespace")
+		// logger.Error(err, "unable to fetch Namespace") // this is not needed
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -103,12 +103,12 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 
 			if err = ctrl.SetControllerReference(ns, np, r.Scheme); err != nil {
-				logger.Error(err, "unable to set owner reference on NetworkPolicy")
+				// logger.Error(err, "unable to set owner reference on NetworkPolicy") // this is not needed
 				return ctrl.Result{}, err
 			}
 
 			if err = r.Create(ctx, np); err != nil {
-				logger.Error(err, "unable to create NetworkPolicy")
+				// logger.Error(err, "unable to create NetworkPolicy") // this is not needed
 				return ctrl.Result{}, err
 			}
 
