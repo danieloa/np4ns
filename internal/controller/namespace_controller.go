@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	client "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -53,70 +54,117 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	ns := &corev1.Namespace{}
 
-	err := r.Get(ctx, req.NamespacedName, ns)
+	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ns, func() error {
+		ns.Name = req.Name
+		return ctrl.SetControllerReference(ns, ns, r.Scheme)
+	})
 	if err != nil {
-		// logger.Error(err, "unable to fetch Namespace") // this is not needed
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		logger.Error(err, "unable to create or update Namespace")
+		return ctrl.Result{}, err
 	}
+	switch op {
+	case controllerutil.OperationResultCreated:
+		logger.Info("Namespace created", "namespace", ns)
+		np := &networkingv1.NetworkPolicy{}
 
-	np := &networkingv1.NetworkPolicy{}
+		err = r.Get(ctx, client.ObjectKey{
+			Namespace: ns.Name,
+			Name:      "enforced-network-policy",
+		}, np)
 
-	err = r.Get(ctx, client.ObjectKey{
-		Namespace: ns.Name,
-		Name:      "enforced-network-policy",
-	}, np)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				np := &networkingv1.NetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "enforced-network-policy",
+						Namespace: ns.Name,
+					},
+					Spec: networkingv1.NetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{},
+						PolicyTypes: []networkingv1.PolicyType{
+							networkingv1.PolicyTypeEgress,
+						},
+						Egress: []networkingv1.NetworkPolicyEgressRule{},
+					},
+				}
 
-	if err != nil {
-		if errors.IsNotFound(err) {
-			np := &networkingv1.NetworkPolicy{
+				if err = ctrl.SetControllerReference(ns, np, r.Scheme); err != nil {
+					// logger.Error(err, "unable to set owner reference on NetworkPolicy") // this is not needed
+					return ctrl.Result{}, err
+				}
+
+				// TODO: investigate the ctrl.CreateOrUpdate method to handle diff lifecycle events, like update vs create
+				if err = r.Create(ctx, np); err != nil {
+					// logger.Error(err, "unable to create NetworkPolicy") // this is not needed
+					return ctrl.Result{}, err
+				}
+
+			}
+		}
+	case controllerutil.OperationResultUpdated:
+		logger.Info("Namespace updated", "namespace", ns)
+		np := &networkingv1.NetworkPolicy{}
+		err = r.Get(ctx, client.ObjectKey{
+			Namespace: ns.Name,
+			Name:      "enforced-network-policy",
+		}, np)
+
+		if err != nil {
+			// if the network policy does not exist, create it again
+			if errors.IsNotFound(err) {
+				np := &networkingv1.NetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "enforced-network-policy",
+						Namespace: ns.Name,
+					},
+					Spec: networkingv1.NetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{},
+						PolicyTypes: []networkingv1.PolicyType{
+							networkingv1.PolicyTypeEgress,
+						},
+						Egress: []networkingv1.NetworkPolicyEgressRule{},
+					},
+				}
+
+				if err = ctrl.SetControllerReference(ns, np, r.Scheme); err != nil {
+					// logger.Error(err, "unable to set owner reference on NetworkPolicy") // this is not needed
+					return ctrl.Result{}, err
+				}
+
+				// TODO: investigate the ctrl.CreateOrUpdate method to handle diff lifecycle events, like update vs create
+				if err = r.Create(ctx, np); err != nil {
+					// logger.Error(err, "unable to create NetworkPolicy") // this is not needed
+					return ctrl.Result{}, err
+				}
+
+			}
+		} else {
+			// check if the network policy is still valid, if not, recreate it
+			npc := &networkingv1.NetworkPolicy{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "enforced-network-policy",
 					Namespace: ns.Name,
 				},
 				Spec: networkingv1.NetworkPolicySpec{
 					PodSelector: metav1.LabelSelector{},
-					// if we'd like to seleck based on Label selector...
-					// PodSelector: metav1.LabelSelector{
-					// 	 MatchLabels: map[string]string{
-					// 	 	 "app": "myapp",
-					// 	 },
-					// },
 					PolicyTypes: []networkingv1.PolicyType{
 						networkingv1.PolicyTypeEgress,
 					},
 					Egress: []networkingv1.NetworkPolicyEgressRule{},
-					// if we'd like to block based on namespace...
-					// Egress: []networkingv1.NetworkPolicyEgressRule{
-					// 	{
-					// 		To: []networkingv1.NetworkPolicyPeer{
-					// 			{
-					// 				NamespaceSelector: &metav1.LabelSelector{
-					// 					MatchLabels: map[string]string{
-					// 						"project": "myproject",
-					// 					},
-					// 				},
-					// 			},
-					// 		},
-					// 	}
-					// },
 				},
 			}
-
-			if err = ctrl.SetControllerReference(ns, np, r.Scheme); err != nil {
-				// logger.Error(err, "unable to set owner reference on NetworkPolicy") // this is not needed
-				return ctrl.Result{}, err
+			if np == npc {
+				// the network policy is still valid
+				return ctrl.Result{}, nil
+			} else {
+				// the network policy is not valid, recreate it
+				if err = r.Delete(ctx, np); err != nil {
+					// logger.Error(err, "unable to delete NetworkPolicy") // this is not needed
+					return ctrl.Result{}, err
+				}
 			}
-
-			// TODO: investigate the ctrl.CreateOrUpdate method to handle diff lifecycle events, like update vs create
-			if err = r.Create(ctx, np); err != nil {
-				// logger.Error(err, "unable to create NetworkPolicy") // this is not needed
-				return ctrl.Result{}, err
-			}
-
 		}
 	}
-
-	// TODO(user): your logic here
 
 	return ctrl.Result{}, nil
 }
