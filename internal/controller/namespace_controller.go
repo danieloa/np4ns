@@ -64,7 +64,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// we want to get notified when a new namespace is created or updated
 	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ns, func() error {
-		logger.Info("CreateOrUpdate??", "ns", ns.Name)
+		logger.Info("CreateOrUpdate", "ns", ns.Name)
 
 		// lets see if the network policy already exists
 		npr := &networkingv1.NetworkPolicy{}
