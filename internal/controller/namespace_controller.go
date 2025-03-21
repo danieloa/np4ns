@@ -21,11 +21,12 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	errors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	client "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -51,6 +52,8 @@ type NamespaceReconciler struct {
 func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
+	// in case we would need to filter to only watch for a specific namespace, we can apply the following filter
+	// ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"}}}
 	ns := &corev1.Namespace{}
 
 	err := r.Get(ctx, req.NamespacedName, ns)
@@ -59,72 +62,77 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	np := &networkingv1.NetworkPolicy{}
+	// we want to get notified when a new namespace is created or updated
+	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ns, func() error {
+		logger.Info("CreateOrUpdate", "ns", ns.Name)
 
-	err = r.Get(ctx, client.ObjectKey{
-		Namespace: ns.Name,
-		Name:      "enforced-network-policy",
-	}, np)
+		// lets see if the network policy already exists
+		npr := &networkingv1.NetworkPolicy{}
+
+		np_err := r.Get(ctx, client.ObjectKey{
+			Namespace: ns.Name,
+			Name:      "enforced-network-policy",
+		}, npr)
+
+		if np_err != nil {
+			if errors.IsNotFound(np_err) {
+				// there is no network policy, set controller reference and create it
+				npc := &networkingv1.NetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "enforced-network-policy",
+						Namespace: ns.Name,
+					},
+					Spec: networkingv1.NetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{},
+						PolicyTypes: []networkingv1.PolicyType{
+							networkingv1.PolicyTypeEgress,
+						},
+						Egress: []networkingv1.NetworkPolicyEgressRule{},
+					},
+				}
+				if np_err = ctrl.SetControllerReference(ns, npc, r.Scheme); np_err != nil {
+					logger.Error(np_err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged by the system
+					return np_err
+				}
+
+				if np_err = r.Create(ctx, npc); np_err != nil {
+					logger.Error(np_err, "unable to create NetworkPolicy") // this is not needed, the error is already logged by the system
+					return np_err
+				}
+
+			}
+		}
+		// because we are using CreateOrUpdate, we need to modify the namespace object to trigger the create/update operation, else we will get a no-op "unchanged"
+		// + sets the label on the namespace
+		if ns.Labels == nil {
+			ns.Labels = make(map[string]string)
+		}
+		ns.Labels["network-policy"] = "enforced"
+		return nil
+	})
 
 	if err != nil {
-		if errors.IsNotFound(err) {
-			np := &networkingv1.NetworkPolicy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "enforced-network-policy",
-					Namespace: ns.Name,
-				},
-				Spec: networkingv1.NetworkPolicySpec{
-					PodSelector: metav1.LabelSelector{},
-					// if we'd like to seleck based on Label selector...
-					// PodSelector: metav1.LabelSelector{
-					// 	 MatchLabels: map[string]string{
-					// 	 	 "app": "myapp",
-					// 	 },
-					// },
-					PolicyTypes: []networkingv1.PolicyType{
-						networkingv1.PolicyTypeEgress,
-					},
-					Egress: []networkingv1.NetworkPolicyEgressRule{},
-					// if we'd like to block based on namespace...
-					// Egress: []networkingv1.NetworkPolicyEgressRule{
-					// 	{
-					// 		To: []networkingv1.NetworkPolicyPeer{
-					// 			{
-					// 				NamespaceSelector: &metav1.LabelSelector{
-					// 					MatchLabels: map[string]string{
-					// 						"project": "myproject",
-					// 					},
-					// 				},
-					// 			},
-					// 		},
-					// 	}
-					// },
-				},
-			}
-
-			if err = ctrl.SetControllerReference(ns, np, r.Scheme); err != nil {
-				// logger.Error(err, "unable to set owner reference on NetworkPolicy") // this is not needed
-				return ctrl.Result{}, err
-			}
-
-			// TODO: investigate the ctrl.CreateOrUpdate method to handle diff lifecycle events, like update vs create
-			if err = r.Create(ctx, np); err != nil {
-				// logger.Error(err, "unable to create NetworkPolicy") // this is not needed
-				return ctrl.Result{}, err
-			}
-
-		}
+		logger.Error(err, "unable to create or update Namespace")
+		return ctrl.Result{}, err
 	}
-
-	// TODO(user): your logic here
-
+	logger.Info("operation:", "op", op)
+	switch op {
+	case controllerutil.OperationResultCreated:
+		// A new namespace is created
+		logger.Info("Namespace being created -> network policy enforced", "namespace", ns)
+	case controllerutil.OperationResultUpdated:
+		// a namespace is updated
+		logger.Info("Namespace being updated -> network policy enforced", "namespace", ns)
+	}
 	return ctrl.Result{}, nil
 }
 
 func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// SetupWithManager sets up the controller with the Manager
+	// + For sets the object type that this controller will watch for
+	// + Owns sets the object type that this controller will own
+	// + Complete finalizes the controller setup
 	return ctrl.NewControllerManagedBy(mgr).
-		// Uncomment the following line adding a pointer to an instance of the controlled resource as an argument
 		For(&corev1.Namespace{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Complete(r)
