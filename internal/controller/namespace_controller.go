@@ -131,7 +131,7 @@ func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// SetupWithManager sets up the controller with the Manager
 	// + For sets the object type that this controller will watch for
 	// + Owns sets the object type that this controller will own
-	// + Complete sets the finalizer for the controller
+	// + Complete finalizes the controller setup
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}).
 		Owns(&networkingv1.NetworkPolicy{}).
