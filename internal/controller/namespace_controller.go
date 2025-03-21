@@ -91,12 +91,12 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					},
 				}
 				if np_err = ctrl.SetControllerReference(ns, npc, r.Scheme); np_err != nil {
-					logger.Error(np_err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged
+					logger.Error(np_err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged by the system
 					return np_err
 				}
 
 				if np_err = r.Create(ctx, npc); np_err != nil {
-					logger.Error(np_err, "unable to create NetworkPolicy") // this is not needed, the error is already logged
+					logger.Error(np_err, "unable to create NetworkPolicy") // this is not needed, the error is already logged by the system
 					return np_err
 				}
 
@@ -112,10 +112,10 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	switch op {
 	case controllerutil.OperationResultCreated:
 		// A new namespace is created
-		logger.Info("Namespace being created", "namespace", ns)
+		logger.Info("Namespace being created -> network policy enforced", "namespace", ns)
 	case controllerutil.OperationResultUpdated:
 		// a namespace is updated
-		logger.Info("Namespace being updated", "namespace", ns)
+		logger.Info("Namespace being updated -> network policy enforced", "namespace", ns)
 	}
 	return ctrl.Result{}, nil
 }
