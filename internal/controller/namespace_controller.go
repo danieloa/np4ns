@@ -102,13 +102,20 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 			}
 		}
+		// because we are using CreateOrUpdate, we need to modify the namespace object to trigger the create/update operation, else we will get a no-op "unchanged"
+		// + sets the label on the namespace
+		ns.Labels = map[string]string{
+			"network-policy": "enforced",
+		}
 
 		return nil
 	})
+
 	if err != nil {
 		logger.Error(err, "unable to create or update Namespace")
 		return ctrl.Result{}, err
 	}
+	logger.Info("operation:", "op", op)
 	switch op {
 	case controllerutil.OperationResultCreated:
 		// A new namespace is created
