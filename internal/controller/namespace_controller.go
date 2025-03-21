@@ -104,10 +104,10 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		// because we are using CreateOrUpdate, we need to modify the namespace object to trigger the create/update operation, else we will get a no-op "unchanged"
 		// + sets the label on the namespace
-		ns.Labels = map[string]string{
-			"network-policy": "enforced",
+		if ns.Labels == nil {
+			ns.Labels = make(map[string]string)
 		}
-
+		ns.Labels["network-policy"] = "enforced"
 		return nil
 	})
 
