@@ -53,7 +53,20 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	logger := log.FromContext(ctx)
 
 	ns := &corev1.Namespace{}
-
+	npc := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "enforced-network-policy",
+			Namespace: ns.Name,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{},
+		},
+	}
+	// we want to get notified when a new namespace is created or updated
 	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ns, func() error {
 		ns.Name = req.Name
 		return ctrl.SetControllerReference(ns, ns, r.Scheme)
@@ -64,6 +77,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	switch op {
 	case controllerutil.OperationResultCreated:
+		// new namespace is created
 		logger.Info("Namespace created", "namespace", ns)
 		np := &networkingv1.NetworkPolicy{}
 
@@ -74,34 +88,22 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		if err != nil {
 			if errors.IsNotFound(err) {
-				np := &networkingv1.NetworkPolicy{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "enforced-network-policy",
-						Namespace: ns.Name,
-					},
-					Spec: networkingv1.NetworkPolicySpec{
-						PodSelector: metav1.LabelSelector{},
-						PolicyTypes: []networkingv1.PolicyType{
-							networkingv1.PolicyTypeEgress,
-						},
-						Egress: []networkingv1.NetworkPolicyEgressRule{},
-					},
-				}
+				// there is no network policy, set controller reference and create it
 
-				if err = ctrl.SetControllerReference(ns, np, r.Scheme); err != nil {
-					// logger.Error(err, "unable to set owner reference on NetworkPolicy") // this is not needed
+				if err = ctrl.SetControllerReference(ns, npc, r.Scheme); err != nil {
+					// logger.Error(err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged
 					return ctrl.Result{}, err
 				}
 
-				// TODO: investigate the ctrl.CreateOrUpdate method to handle diff lifecycle events, like update vs create
-				if err = r.Create(ctx, np); err != nil {
-					// logger.Error(err, "unable to create NetworkPolicy") // this is not needed
+				if err = r.Create(ctx, npc); err != nil {
+					// logger.Error(err, "unable to create NetworkPolicy") // this is not needed, the error is already logged
 					return ctrl.Result{}, err
 				}
 
 			}
 		}
 	case controllerutil.OperationResultUpdated:
+		// a namespace is updated
 		logger.Info("Namespace updated", "namespace", ns)
 		np := &networkingv1.NetworkPolicy{}
 		err = r.Get(ctx, client.ObjectKey{
@@ -110,36 +112,21 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}, np)
 
 		if err != nil {
-			// if the network policy does not exist, create it again
 			if errors.IsNotFound(err) {
-				np := &networkingv1.NetworkPolicy{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "enforced-network-policy",
-						Namespace: ns.Name,
-					},
-					Spec: networkingv1.NetworkPolicySpec{
-						PodSelector: metav1.LabelSelector{},
-						PolicyTypes: []networkingv1.PolicyType{
-							networkingv1.PolicyTypeEgress,
-						},
-						Egress: []networkingv1.NetworkPolicyEgressRule{},
-					},
-				}
-
-				if err = ctrl.SetControllerReference(ns, np, r.Scheme); err != nil {
-					// logger.Error(err, "unable to set owner reference on NetworkPolicy") // this is not needed
+				// for whatever reasson the network policy does not exist, create it again
+				if err = ctrl.SetControllerReference(ns, npc, r.Scheme); err != nil {
+					// logger.Error(err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged
 					return ctrl.Result{}, err
 				}
 
-				// TODO: investigate the ctrl.CreateOrUpdate method to handle diff lifecycle events, like update vs create
-				if err = r.Create(ctx, np); err != nil {
-					// logger.Error(err, "unable to create NetworkPolicy") // this is not needed
+				if err = r.Create(ctx, npc); err != nil {
+					// logger.Error(err, "unable to create NetworkPolicy") // this is not needed, the error is already logged
 					return ctrl.Result{}, err
 				}
 
 			}
 		} else {
-			// check if the network policy is still valid, if not, recreate it
+			// np exists so lets check if the network policy is still valid, if not, recreate it
 			npc := &networkingv1.NetworkPolicy{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "enforced-network-policy",
@@ -159,7 +146,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			} else {
 				// the network policy is not valid, recreate it
 				if err = r.Delete(ctx, np); err != nil {
-					// logger.Error(err, "unable to delete NetworkPolicy") // this is not needed
+					// logger.Error(err, "unable to delete NetworkPolicy") // this is not needed, the error is already logged
 					return ctrl.Result{}, err
 				}
 			}
@@ -171,8 +158,10 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// SetupWithManager sets up the controller with the Manager
+	// + For sets the object type that this controller will watch for
+	// + Owns sets the object type that this controller will own
+	// + Complete sets the finalizer for the controller
 	return ctrl.NewControllerManagedBy(mgr).
-		// Uncomment the following line adding a pointer to an instance of the controlled resource as an argument
 		For(&corev1.Namespace{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Complete(r)
