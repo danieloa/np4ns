@@ -64,8 +64,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// we want to get notified when a new namespace is created or updated
 	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ns, func() error {
-		logger.Info("CreateOrUpdate", "ns", ns.Name)
-
+		// logger.Info("CreateOrUpdate", "ns", ns.Name)
 		// lets see if the network policy already exists
 		npr := &networkingv1.NetworkPolicy{}
 
@@ -76,7 +75,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		if np_err != nil {
 			if errors.IsNotFound(np_err) {
-				// there is no network policy, set controller reference and create it
+				logger.Info("CreateOrUpdate -> NetworkPolicy not found, creating one", "namespace", ns.Name)
 				npc := &networkingv1.NetworkPolicy{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "enforced-network-policy",
@@ -90,6 +89,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 						Egress: []networkingv1.NetworkPolicyEgressRule{},
 					},
 				}
+				// there is no network policy, set controller reference and create it
 				if np_err = ctrl.SetControllerReference(ns, npc, r.Scheme); np_err != nil {
 					logger.Error(np_err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged by the system
 					return np_err
@@ -99,9 +99,9 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					logger.Error(np_err, "unable to create NetworkPolicy") // this is not needed, the error is already logged by the system
 					return np_err
 				}
-
 			}
 		}
+
 		// because we are using CreateOrUpdate, we need to modify the namespace object to trigger the create/update operation, else we will get a no-op "unchanged"
 		// + sets the label on the namespace
 		if ns.Labels == nil {
@@ -115,14 +115,70 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Error(err, "unable to create or update Namespace")
 		return ctrl.Result{}, err
 	}
-	logger.Info("operation:", "op", op)
+
 	switch op {
 	case controllerutil.OperationResultCreated:
-		// A new namespace is created
+		// A new namespace is created - i haev the feeling this is never executed !? not even when manually creating the namespace
 		logger.Info("Namespace being created -> network policy enforced", "namespace", ns)
+
 	case controllerutil.OperationResultUpdated:
-		// a namespace is updated
-		logger.Info("Namespace being updated -> network policy enforced", "namespace", ns)
+		// A namespace is updated
+		// lets see if the network policy already exists
+		npr := &networkingv1.NetworkPolicy{}
+
+		np_err := r.Get(ctx, client.ObjectKey{
+			Namespace: ns.Name,
+			Name:      "enforced-network-policy",
+		}, npr)
+
+		new_np := &networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "enforced-network-policy",
+				Namespace: ns.Name,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeEgress,
+				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{},
+			},
+		}
+
+		if np_err != nil {
+			if errors.IsNotFound(np_err) {
+				logger.Info("OperationResultUpdated -> NetworkPolicy not found, creating one", "namespace", ns.Name)
+
+				// there is no network policy, set controller reference and create it
+				if np_err = ctrl.SetControllerReference(ns, new_np, r.Scheme); np_err != nil {
+					logger.Error(np_err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged by the system
+					return ctrl.Result{}, np_err
+				}
+
+				if np_err = r.Create(ctx, new_np); np_err != nil {
+					logger.Error(np_err, "unable to create NetworkPolicy") // this is not needed, the error is already logged by the system
+					return ctrl.Result{}, np_err
+				}
+			}
+		} else {
+			logger.Info("OperationResultUpdated -> NetworkPolicy found, recreating it", "namespace", ns.Name)
+			if np_err = ctrl.SetControllerReference(ns, npr, r.Scheme); np_err != nil {
+				// sets the owner reference on the network policy
+				logger.Error(np_err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged by the system
+				return ctrl.Result{}, np_err
+			}
+			if np_err = r.Delete(ctx, npr); np_err != nil {
+				// assumes np is wrong and deletes the existing one
+				logger.Error(np_err, "unable to delete NetworkPolicy") // this is not needed, the error is already logged by the system
+				return ctrl.Result{}, np_err
+			}
+
+			if np_err = r.Create(ctx, new_np); np_err != nil {
+				// creates a new network policy
+				logger.Error(np_err, "unable to create NetworkPolicy") // this is not needed, the error is already logged by the system
+				return ctrl.Result{}, np_err
+			}
+		}
 	}
 	return ctrl.Result{}, nil
 }
