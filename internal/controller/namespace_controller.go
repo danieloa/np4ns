@@ -160,7 +160,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("CreateOrUpdate", "namespace", ns.Name, "operation", op)
+	// logger.Info("CreateOrUpdate", "namespace", ns.Name, "operation", op)
 
 	switch op {
 	case controllerutil.OperationResultCreated:
