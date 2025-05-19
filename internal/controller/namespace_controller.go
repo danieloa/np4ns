@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"reflect"
+	"time"
 
 	slices "golang.org/x/exp/slices"
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	client "sigs.k8s.io/controller-runtime/pkg/client"
@@ -58,9 +61,9 @@ type NamespaceReconciler struct {
 func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	ns_exception_list := []string{"kube-system", "kube-public", "kube-node-lease", "local-path-storage"}
+	nsExceptionList := []string{"kube-system", "kube-public", "kube-node-lease", "local-path-storage"}
 
-	if slices.Contains(ns_exception_list, req.NamespacedName.Name) {
+	if slices.Contains(nsExceptionList, req.NamespacedName.Name) {
 		// errorMsg := "NamespaceReconciler only works for the platform namespace"
 		// logger.Error(nil, errorMsg, "namespace", req.NamespacedName.Name)
 		return ctrl.Result{}, nil
@@ -84,25 +87,48 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, np_err
 	}
 
+	// define compliant network policy
+	protocolTCP := corev1.ProtocolTCP
+	port := intstr.FromInt(80)
+
+	np := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "enforced-network-policy",
+			Namespace: ns.Name,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"name": "target-namespace",
+								},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{
+							Protocol: &protocolTCP,
+							Port:     &port,
+						},
+					},
+				},
+			},
+		},
+	}
+
 	// we want to get notified when a new namespace is created or updated
 	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ns, func() error {
 
 		if len(npl.Items) == 0 {
 			logger.Info("No network policies found in namespace", "namespace", ns.Name)
 			// create a new network policy
-			np := &networkingv1.NetworkPolicy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "enforced-network-policy",
-					Namespace: ns.Name,
-				},
-				Spec: networkingv1.NetworkPolicySpec{
-					PodSelector: metav1.LabelSelector{},
-					PolicyTypes: []networkingv1.PolicyType{
-						networkingv1.PolicyTypeEgress,
-					},
-					Egress: []networkingv1.NetworkPolicyEgressRule{},
-				},
-			}
 			// sets the owner reference on the network policy
 			if np_err := ctrl.SetControllerReference(ns, np, r.Scheme); np_err != nil {
 				logger.Error(np_err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged by the system
@@ -122,9 +148,9 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if ns.Annotations == nil {
 			ns.Annotations = map[string]string{}
 		}
-		if _, exists := ns.Annotations["network-policy/enforced"]; !exists {
-			ns.Annotations["network-policy/enforced"] = "true"
-		}
+
+		currentTime := time.Now().Format(time.RFC3339)
+		ns.Annotations["network-policy/enforced"] = currentTime
 
 		return nil
 	})
@@ -138,14 +164,32 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	switch op {
 	case controllerutil.OperationResultCreated:
-		// A new namespace is created - however as the controller cycle ended, next cycle would be unchanged, hence this is never executed
-		// in case you need to do something on creation you do it inside the CreateOrUpdate funct
-		logger.Info("Namespace being created -> network policy enforced", "namespace", ns)
+		// this clock never executes,
+		// the namespace is created in another, so when the controller catches the 1st event for this ns, it will be in the "unchanged"
+		// hence this never prints
+		logger.Info("Namespace being created -> network policy enforced", "namespace", ns.Name)
 
 	case controllerutil.OperationResultUpdated:
 		// A namespace is updated
-		// lets see if the network policy already exists
-		logger.Info("Namespace being updated -> check for network policies", "namespace", ns, "operation", op, "count", len(npl.Items))
+		// in the case there were no enforced network policy when entering the Reconcile loop, at least one is already created by the code above
+		// so we need to do something else, like ensuring the network policy is appropriate?
+		logger.Info("Namespace ", ns.Name, "being updated -> checking for network policies", "count", len(npl.Items))
+		for _, netpol := range npl.Items {
+			if reflect.DeepEqual(netpol.Spec, np.Spec) {
+				// compliant
+				logger.Info("NetworkPolicy is compliant", "name", netpol.Name, "namespace", ns.Name)
+			} else {
+				// non-compliant
+				logger.Info("NetworkPolicy is not compliant", "name", netpol.Name, "namespace", ns.Name)
+
+				// update the network policy
+				if err := r.Update(ctx, np); err != nil {
+					logger.Error(err, "unable to update NetworkPolicy", "name", np.Name, "namespace", ns.Name)
+					return ctrl.Result{}, err
+				}
+				logger.Info("NetworkPolicy updated", "name", np.Name, "namespace", ns.Name)
+			}
+		}
 	}
 	return ctrl.Result{}, nil
 }

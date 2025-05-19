@@ -3,7 +3,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: enforced-network-policy
-  namespace: compliant-ns
+  namespace: <namespace_name>
 spec:
   podSelector: {}  # Selects all pods in namespace B
   policyTypes:
