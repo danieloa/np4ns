@@ -39,10 +39,20 @@ For this particular case, we do not need to create any CRD, hence when creating 
 
 ### To Run on the cluster
 
-ensure kubectx is set to kind cluster before running:
+Note: ensure kubectx is set to kind cluster:
 
 ```sh
 go run cmd/main.go
 ```
 
+it will iterate thru all namespaces (excpet the ones from the nsExceptionList) and where no network policy is found, will create a compliant one.
+if you create a new namespace, a compliant network policy will be enforced
+if you edit an existing network policy, it will validate it and if not compliant, it will make it compliant
+if you delete an existing network policy it will recreate it
 
+
+### TODO Next:
+
+- create crd to define:
+- - nsExceptionList (which ns we do not enforce network policies)
+- - nsTarget (over which ns we enforce the network policy)

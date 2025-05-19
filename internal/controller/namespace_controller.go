@@ -61,7 +61,7 @@ type NamespaceReconciler struct {
 func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	nsExceptionList := []string{"kube-system", "kube-public", "kube-node-lease", "local-path-storage"}
+	nsExceptionList := []string{"kube-system", "kube-public", "kube-node-lease", "local-path-storage", "target-namespace"}
 
 	if slices.Contains(nsExceptionList, req.NamespacedName.Name) {
 		// errorMsg := "NamespaceReconciler only works for the platform namespace"
