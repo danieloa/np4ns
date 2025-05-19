@@ -53,6 +53,11 @@ if you delete an existing network policy it will recreate it
 
 ### TODO Next:
 
-- create crd to define:
-- - nsExceptionList (which ns we do not enforce network policies)
-- - nsTarget (over which ns we enforce the network policy)
+- nsExceptionList (which ns we do not enforce network policies)
+and
+- nsTarget (over which ns we enforce the network policy)
+can both  be mounted as a configmap into the operator's pod on deployment runtime, 
+hence, we can simply read
+- `os.Getenv("NS_EXCEPTION_LIST")`
+- `os.Getenv("NS_TARGET_FOR_NP")`
+
