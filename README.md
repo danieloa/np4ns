@@ -53,11 +53,18 @@ if you delete an existing network policy it will recreate it
 
 ### TODO Next:
 
-- nsExceptionList (which ns we do not enforce network policies)
-and
-- nsTarget (over which ns we enforce the network policy)
-can both  be mounted as a configmap into the operator's pod on deployment runtime, 
-hence, we can simply read
-- `os.Getenv("NS_EXCEPTION_LIST")`
-- `os.Getenv("NS_TARGET_FOR_NP")`
+- `NS_EXCEPTION_LIST` (namespaces where network policies are not enforced)
+- `NS_TARGET_FOR_NP` (namespaces where network policies are enforced)
 
+These environment variables can be set via a ConfigMap and mounted into the operator's pod at deployment runtime. Below are examples of how to configure them:
+
+#### ConfigMap Example
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: np4ns-config
+  namespace: default
+data:
+  NS_EXCEPTION_LIST: "kube-system,default"
+  NS_TARGET_FOR_NP: "team-a,team-b"
