@@ -39,10 +39,32 @@ For this particular case, we do not need to create any CRD, hence when creating 
 
 ### To Run on the cluster
 
-ensure kubectx is set to kind cluster before running:
+Note: ensure kubectx is set to kind cluster:
 
 ```sh
 go run cmd/main.go
 ```
 
+it will iterate through all namespaces (except the ones from the nsExceptionList) and where no network policy is found, will create a compliant one.
+if you create a new namespace, a compliant network policy will be enforced
+if you edit an existing network policy, it will validate it and if not compliant, it will make it compliant
+if you delete an existing network policy it will recreate it
 
+
+### TODO Next:
+
+- `NS_EXCEPTION_LIST` (namespaces where network policies are not enforced)
+- `NS_TARGET_FOR_NP` (namespaces where network policies are enforced)
+
+These environment variables can be set via a ConfigMap and mounted into the operator's pod at deployment runtime. Below are examples of how to configure them:
+
+#### ConfigMap Example
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: np4ns-config
+  namespace: default
+data:
+  NS_EXCEPTION_LIST: "kube-system,default"
+  NS_TARGET_FOR_NP: "team-a,team-b"
