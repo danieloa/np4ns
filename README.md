@@ -45,7 +45,7 @@ Note: ensure kubectx is set to kind cluster:
 go run cmd/main.go
 ```
 
-it will iterate thru all namespaces (excpet the ones from the nsExceptionList) and where no network policy is found, will create a compliant one.
+it will iterate through all namespaces (except the ones from the nsExceptionList) and where no network policy is found, will create a compliant one.
 if you create a new namespace, a compliant network policy will be enforced
 if you edit an existing network policy, it will validate it and if not compliant, it will make it compliant
 if you delete an existing network policy it will recreate it
