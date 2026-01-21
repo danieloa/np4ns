@@ -1,0 +1,17 @@
+{{- if and .Values.rbac.create .Values.leaderElection.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "np4ns.fullname" . }}-leader-election-rolebinding
+  namespace: {{ include "np4ns.namespace" . }}
+  labels:
+    {{- include "np4ns.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "np4ns.fullname" . }}-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "np4ns.serviceAccountName" . }}
+  namespace: {{ include "np4ns.namespace" . }}
+{{- end }}

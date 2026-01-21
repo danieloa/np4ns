@@ -1,0 +1,9 @@
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "np4ns.namespace" . }}
+  labels:
+    {{- include "np4ns.labels" . | nindent 4 }}
+    control-plane: controller-manager
+{{- end }}

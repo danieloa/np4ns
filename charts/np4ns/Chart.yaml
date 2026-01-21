@@ -1,0 +1,20 @@
+apiVersion: v2
+name: np4ns
+description: Network Policies For Namespaces - Kubernetes operator that automatically enforces network policies
+type: application
+version: 0.0.5
+appVersion: "0.0.5"
+keywords:
+  - kubernetes
+  - operator
+  - network-policy
+  - security
+  - compliance
+home: https://github.com/danieloa/np4ns
+sources:
+  - https://github.com/danieloa/np4ns
+maintainers:
+  - name: danieloa
+    url: https://github.com/danieloa
+icon: https://raw.githubusercontent.com/kubernetes/community/master/icons/svg/resources/labeled/netpol.svg
+kubeVersion: ">=1.11.3"

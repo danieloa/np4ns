@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "np4ns.fullname" . }}-config
+  namespace: {{ include "np4ns.namespace" . }}
+  labels:
+    {{- include "np4ns.labels" . | nindent 4 }}
+data:
+  NS_EXCEPTION_LIST: {{ .Values.config.nsExceptionList | quote }}
+  NS_TARGET_FOR_NP: {{ .Values.config.nsTargetForNp | quote }}

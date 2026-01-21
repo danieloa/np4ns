@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or Discussion
+    url: https://github.com/danieloa/np4ns/discussions
+    about: For questions and discussions, please use GitHub Discussions
+  - name: Security Vulnerability
+    url: https://github.com/danieloa/np4ns/security/advisories/new
+    about: For security issues, please report privately via Security Advisories

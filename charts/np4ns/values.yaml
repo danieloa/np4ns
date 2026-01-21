@@ -1,0 +1,130 @@
+# Default values for np4ns.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Operator image configuration
+image:
+  repository: ghcr.io/danieloa/np4ns
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Namespace where the operator will be installed
+namespace:
+  create: true
+  name: np4ns-system
+
+# Service Account configuration
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# Deployment configuration
+replicaCount: 1
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod labels
+podLabels: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  # seccompProfile:
+  #   type: RuntimeDefault
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - "ALL"
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# Liveness probe configuration
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+# Readiness probe configuration
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules
+affinity: {}
+
+# Leader election settings
+leaderElection:
+  enabled: true
+
+# Network Policy Configuration
+config:
+  # Comma-separated list of namespaces to exclude from enforcement
+  # Default: kube-system,kube-public,kube-node-lease,local-path-storage
+  nsExceptionList: "kube-system,kube-public,kube-node-lease,local-path-storage"
+
+  # Comma-separated list of namespaces to enforce policies on
+  # If empty, enforces on all namespaces except those in nsExceptionList
+  # If set, ONLY enforces on namespaces in this list (exception list is still checked first)
+  # Default: "" (empty = enforce on all except exceptions)
+  nsTargetForNp: ""
+
+# RBAC configuration
+rbac:
+  # Specifies whether RBAC resources should be created
+  create: true
+
+# Metrics configuration
+metrics:
+  enabled: true
+  port: 8080
+
+# Additional environment variables
+extraEnv: []
+  # - name: LOG_LEVEL
+  #   value: "debug"
+
+# Additional volumes
+extraVolumes: []
+  # - name: custom-config
+  #   configMap:
+  #     name: my-config
+
+# Additional volume mounts
+extraVolumeMounts: []
+  # - name: custom-config
+  #   mountPath: /config
+  #   readOnly: true
