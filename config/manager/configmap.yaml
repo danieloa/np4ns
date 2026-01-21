@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: np4ns-config
+  namespace: system
+data:
+  # Comma-separated list of namespaces to exclude from network policy enforcement
+  # Default namespaces are already excluded if this is not set:
+  # kube-system, kube-public, kube-node-lease, local-path-storage
+  NS_EXCEPTION_LIST: "kube-system,kube-public,kube-node-lease,local-path-storage"
+
+  # Comma-separated list of namespaces to enforce network policies on
+  # If empty, all namespaces (except exceptions) will be enforced
+  # If set, ONLY these namespaces will have network policies enforced
+  NS_TARGET_FOR_NP: ""

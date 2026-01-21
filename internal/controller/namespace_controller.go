@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	slices "golang.org/x/exp/slices"
@@ -29,12 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	client "sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -42,6 +41,66 @@ import (
 type NamespaceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+}
+
+// getNamespaceExceptionList returns the list of namespaces to exclude from network policy enforcement.
+// Reads from NS_EXCEPTION_LIST environment variable (comma-separated), or uses defaults.
+func getNamespaceExceptionList() []string {
+	defaultExceptions := []string{"kube-system", "kube-public", "kube-node-lease", "local-path-storage"}
+
+	envList := os.Getenv("NS_EXCEPTION_LIST")
+	if envList == "" {
+		return defaultExceptions
+	}
+
+	exceptions := strings.Split(envList, ",")
+	result := make([]string, 0, len(exceptions))
+	for _, ns := range exceptions {
+		trimmed := strings.TrimSpace(ns)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+// getNamespaceTargetList returns the list of namespaces to enforce network policies on.
+// Reads from NS_TARGET_FOR_NP environment variable (comma-separated).
+// If empty, returns nil (meaning enforce on all except exceptions).
+func getNamespaceTargetList() []string {
+	envList := os.Getenv("NS_TARGET_FOR_NP")
+	if envList == "" {
+		return nil
+	}
+
+	targets := strings.Split(envList, ",")
+	result := make([]string, 0, len(targets))
+	for _, ns := range targets {
+		trimmed := strings.TrimSpace(ns)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+// shouldEnforceNetworkPolicy determines if a namespace should have network policy enforcement.
+func shouldEnforceNetworkPolicy(namespaceName string) bool {
+	// Check exceptions first
+	exceptions := getNamespaceExceptionList()
+	if slices.Contains(exceptions, namespaceName) {
+		return false
+	}
+
+	// Check if there's a target list
+	targets := getNamespaceTargetList()
+	if targets == nil {
+		// No target list means enforce on all (except exceptions)
+		return true
+	}
+
+	// If target list exists, only enforce on those namespaces
+	return slices.Contains(targets, namespaceName)
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -55,143 +114,143 @@ type NamespaceReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 //
 
-// +kubebuilder:rbac:groups=danieloa.io,resources=namespaces,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=danieloa.io,resources=namespaces/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=danieloa.io,resources=namespaces/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	nsExceptionList := []string{"kube-system", "kube-public", "kube-node-lease", "local-path-storage", "target-namespace"}
-
-	if slices.Contains(nsExceptionList, req.NamespacedName.Name) {
-		// errorMsg := "NamespaceReconciler only works for the platform namespace"
-		// logger.Error(nil, errorMsg, "namespace", req.NamespacedName.Name)
+	// Check if this namespace should have network policy enforcement
+	if !shouldEnforceNetworkPolicy(req.NamespacedName.Name) {
+		logger.V(1).Info("Skipping namespace (not in target list or in exception list)", "namespace", req.NamespacedName.Name)
 		return ctrl.Result{}, nil
 	}
-	// in case we would need to filter to only watch for a specific namespace, we can apply the following filter
-	// ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "platform", Namespace: "platform"}}
+	// Fetch the namespace
 	ns := &corev1.Namespace{}
-
 	err := r.Get(ctx, req.NamespacedName, ns)
 	if err != nil {
-		// logger.Error(err, "unable to fetch Namespace") // this is not needed
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	// lets see if the network policy already exists
-	npl := &networkingv1.NetworkPolicyList{}
 
-	np_err := r.List(ctx, npl, client.InNamespace(ns.Name))
+	// Define the desired (compliant) network policy spec
+	desiredNPSpec := buildCompliantNetworkPolicySpec()
 
-	if np_err != nil {
-		// logger.Error(np_err, "unable to list NetworkPolicies") // this is not needed, the error is already logged by the system
-		return ctrl.Result{}, np_err
+	// Check if the enforced network policy already exists
+	enforcedNPName := "enforced-network-policy"
+	existingNP := &networkingv1.NetworkPolicy{}
+	err = r.Get(ctx, types.NamespacedName{Name: enforcedNPName, Namespace: ns.Name}, existingNP)
+
+	if err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			logger.Error(err, "failed to get NetworkPolicy")
+			return ctrl.Result{}, err
+		}
+
+		// NetworkPolicy doesn't exist, create it
+		logger.Info("Creating enforced NetworkPolicy", "namespace", ns.Name)
+		np := &networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      enforcedNPName,
+				Namespace: ns.Name,
+			},
+			Spec: desiredNPSpec,
+		}
+
+		// Set owner reference so the NetworkPolicy is cleaned up when the namespace is deleted
+		if err := ctrl.SetControllerReference(ns, np, r.Scheme); err != nil {
+			logger.Error(err, "failed to set owner reference on NetworkPolicy")
+			return ctrl.Result{}, err
+		}
+
+		if err := r.Create(ctx, np); err != nil {
+			logger.Error(err, "failed to create NetworkPolicy")
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("Successfully created enforced NetworkPolicy", "namespace", ns.Name, "policy", enforcedNPName)
+
+		// Update namespace annotation
+		if err := r.updateNamespaceAnnotation(ctx, ns); err != nil {
+			logger.Error(err, "failed to update namespace annotation")
+			// Don't return error, annotation is not critical
+		}
+
+		return ctrl.Result{}, nil
 	}
 
-	// define compliant network policy
+	// NetworkPolicy exists, check if it's compliant
+	if !reflect.DeepEqual(existingNP.Spec, desiredNPSpec) {
+		logger.Info("NetworkPolicy is not compliant, updating", "namespace", ns.Name, "policy", enforcedNPName)
+
+		// Update the spec to be compliant
+		existingNP.Spec = desiredNPSpec
+		if err := r.Update(ctx, existingNP); err != nil {
+			logger.Error(err, "failed to update NetworkPolicy")
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("Successfully updated NetworkPolicy to be compliant", "namespace", ns.Name, "policy", enforcedNPName)
+
+		// Update namespace annotation
+		if err := r.updateNamespaceAnnotation(ctx, ns); err != nil {
+			logger.Error(err, "failed to update namespace annotation")
+		}
+
+		return ctrl.Result{}, nil
+	}
+
+	// NetworkPolicy exists and is compliant
+	logger.V(1).Info("NetworkPolicy is compliant", "namespace", ns.Name, "policy", enforcedNPName)
+	return ctrl.Result{}, nil
+}
+
+// buildCompliantNetworkPolicySpec returns the desired NetworkPolicy spec that should be enforced.
+// This matches the spec defined in helpers/compliant_np.yaml.
+func buildCompliantNetworkPolicySpec() networkingv1.NetworkPolicySpec {
 	protocolTCP := corev1.ProtocolTCP
 	port := intstr.FromInt(80)
 
-	np := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "enforced-network-policy",
-			Namespace: ns.Name,
+	return networkingv1.NetworkPolicySpec{
+		PodSelector: metav1.LabelSelector{}, // Selects all pods in the namespace
+		PolicyTypes: []networkingv1.PolicyType{
+			networkingv1.PolicyTypeEgress,
 		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeEgress,
-			},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"name": "target-namespace",
-								},
+		Egress: []networkingv1.NetworkPolicyEgressRule{
+			{
+				To: []networkingv1.NetworkPolicyPeer{
+					{
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"name": "target-namespace",
+							},
+						},
+						PodSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"app": "myapp",
 							},
 						},
 					},
-					Ports: []networkingv1.NetworkPolicyPort{
-						{
-							Protocol: &protocolTCP,
-							Port:     &port,
-						},
+				},
+				Ports: []networkingv1.NetworkPolicyPort{
+					{
+						Protocol: &protocolTCP,
+						Port:     &port,
 					},
 				},
 			},
 		},
 	}
+}
 
-	// we want to get notified when a new namespace is created or updated
-	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ns, func() error {
-
-		if len(npl.Items) == 0 {
-			logger.Info("No network policies found in namespace", "namespace", ns.Name)
-			// create a new network policy
-			// sets the owner reference on the network policy
-			if np_err := ctrl.SetControllerReference(ns, np, r.Scheme); np_err != nil {
-				logger.Error(np_err, "unable to set owner reference on NetworkPolicy") // this is not needed, the error is already logged by the system
-				return np_err
-			}
-			// create the network policy
-			if np_err := r.Create(ctx, np); np_err != nil {
-				logger.Error(np_err, "unable to create NetworkPolicy") // this is not needed, the error is already logged by the system
-				return np_err
-			}
-			logger.Info("NetworkPolicy created", "name", np.Name)
-			return nil
-		} else {
-			logger.Info("Network policies found", "count", len(npl.Items))
-		}
-
-		if ns.Annotations == nil {
-			ns.Annotations = map[string]string{}
-		}
-
-		currentTime := time.Now().Format(time.RFC3339)
-		ns.Annotations["network-policy/enforced"] = currentTime
-
-		return nil
-	})
-
-	if err != nil {
-		logger.Error(err, "unable to create or update Namespace")
-		return ctrl.Result{}, err
+// updateNamespaceAnnotation adds/updates an annotation on the namespace to track enforcement.
+func (r *NamespaceReconciler) updateNamespaceAnnotation(ctx context.Context, ns *corev1.Namespace) error {
+	if ns.Annotations == nil {
+		ns.Annotations = map[string]string{}
 	}
 
-	// logger.Info("CreateOrUpdate", "namespace", ns.Name, "operation", op)
+	currentTime := time.Now().Format(time.RFC3339)
+	ns.Annotations["network-policy/enforced"] = currentTime
 
-	switch op {
-	case controllerutil.OperationResultCreated:
-		// this clock never executes,
-		// the namespace is created in another, so when the controller catches the 1st event for this ns, it will be in the "unchanged"
-		// hence this never prints
-		logger.Info("Namespace being created -> network policy enforced", "namespace", ns.Name)
-
-	case controllerutil.OperationResultUpdated:
-		// A namespace is updated
-		// in the case there were no enforced network policy when entering the Reconcile loop, at least one is already created by the code above
-		// so we need to do something else, like ensuring the network policy is appropriate?
-		logger.Info("Namespace ", ns.Name, "being updated -> checking for network policies", "count", len(npl.Items))
-		for _, netpol := range npl.Items {
-			if reflect.DeepEqual(netpol.Spec, np.Spec) {
-				// compliant
-				logger.Info("NetworkPolicy is compliant", "name", netpol.Name, "namespace", ns.Name)
-			} else {
-				// non-compliant
-				logger.Info("NetworkPolicy is not compliant", "name", netpol.Name, "namespace", ns.Name)
-
-				// update the network policy
-				if err := r.Update(ctx, np); err != nil {
-					logger.Error(err, "unable to update NetworkPolicy", "name", np.Name, "namespace", ns.Name)
-					return ctrl.Result{}, err
-				}
-				logger.Info("NetworkPolicy updated", "name", np.Name, "namespace", ns.Name)
-			}
-		}
-	}
-	return ctrl.Result{}, nil
+	return r.Update(ctx, ns)
 }
 
 func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -207,11 +266,17 @@ func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// 🟢 Use Watches() and map back to the namespace.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}). // Primary resource
-		// Secondary watch: NetworkPolicies
+		// Watch NetworkPolicies - trigger reconciliation when they are created, updated, or deleted
+		// This ensures the operator can recreate the enforced policy if it gets deleted
 		Watches(
 			&networkingv1.NetworkPolicy{},
 			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 				np := obj.(*networkingv1.NetworkPolicy)
+
+				// Only watch for our enforced network policy
+				if np.Name != "enforced-network-policy" {
+					return []reconcile.Request{}
+				}
 
 				// Reconcile the Namespace where this NetworkPolicy resides
 				return []reconcile.Request{
@@ -222,14 +287,7 @@ func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					},
 				}
 			}),
-			// Optional: Only respond on create/update (filter out deletes, if needed)
-			builder.WithPredicates(
-				predicate.Or(
-					predicate.ResourceVersionChangedPredicate{},
-					predicate.GenerationChangedPredicate{},
-				),
-			),
+			// No predicate filter - we want to catch all events including deletions
 		).
-		// Owns(&networkingv1.NetworkPolicy{}).
 		Complete(r)
 }

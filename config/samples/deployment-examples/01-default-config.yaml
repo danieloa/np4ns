@@ -1,0 +1,15 @@
+# Example 1: Default Configuration
+# This configuration enforces network policies on ALL namespaces except the default exceptions
+# (kube-system, kube-public, kube-node-lease, local-path-storage)
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: np4ns-config
+  namespace: np4ns-system
+data:
+  # Use default exception list
+  NS_EXCEPTION_LIST: "kube-system,kube-public,kube-node-lease,local-path-storage"
+
+  # Empty means enforce on all namespaces (except exceptions)
+  NS_TARGET_FOR_NP: ""

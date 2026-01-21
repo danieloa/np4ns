@@ -1,0 +1,14 @@
+# Example 2: Selective Enforcement
+# Only enforce network policies on specific production namespaces
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: np4ns-config
+  namespace: np4ns-system
+data:
+  # Still exclude system namespaces
+  NS_EXCEPTION_LIST: "kube-system,kube-public,kube-node-lease,local-path-storage"
+
+  # ONLY enforce on these specific namespaces
+  NS_TARGET_FOR_NP: "production,prod-api,prod-database,prod-frontend"

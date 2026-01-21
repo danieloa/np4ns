@@ -1,0 +1,14 @@
+# Example 4: Development/Staging Only
+# Only enforce on dev and staging environments, leave production alone
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: np4ns-config
+  namespace: np4ns-system
+data:
+  # Minimal exceptions
+  NS_EXCEPTION_LIST: "kube-system,kube-public,kube-node-lease"
+
+  # Only target development namespaces
+  NS_TARGET_FOR_NP: "dev-team-a,dev-team-b,staging-api,staging-frontend"

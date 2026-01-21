@@ -64,7 +64,12 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
+        imagePullPolicy: IfNotPresent
         name: manager
+        envFrom:
+        - configMapRef:
+            name: np4ns-config
+            optional: true
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

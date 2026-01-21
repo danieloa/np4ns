@@ -1,0 +1,52 @@
+# Target namespace setup
+# The enforced network policy allows egress to pods with label "app: myapp"
+# in namespaces with label "name: target-namespace"
+
+# Create the target namespace with the required label
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: target-namespace
+  labels:
+    name: target-namespace  # Required label for network policy matching
+    environment: shared
+---
+# Create a sample deployment in the target namespace
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  namespace: target-namespace
+  labels:
+    app: myapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp  # Required label for network policy matching
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+          name: http
+---
+# Create a service to expose the app
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+  namespace: target-namespace
+spec:
+  selector:
+    app: myapp
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
