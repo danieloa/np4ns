@@ -390,10 +390,8 @@ kubectl delete -f config/samples/target-namespace-setup.yaml
 ### Running Locally (Development)
 
 ```bash
-# Install CRDs (if any)
-make install
-
-# Run operator locally (connects to cluster via kubeconfig)
+# Run operator locally (connects to cluster via kubeconfig).
+# np4ns defines no CRDs, so there is nothing to install first.
 make run
 ```
 
