@@ -25,3 +25,5 @@ go.work.sum
 .env
 .claude/
 bin/
+
+**.DS_store
